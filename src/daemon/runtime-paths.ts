@@ -95,15 +95,15 @@ try {
 process.stdout.write(JSON.stringify({ nodeVersion: process.versions.node, sqliteVersion }));
 `;
 
-type NodeRuntimeInfo = {
+export type NodeRuntimeInfo = {
   nodeVersion: string | null;
   sqliteVersion: string | null;
   supported: boolean;
 };
 
-async function resolveNodeRuntimeInfo(
+export async function resolveNodeRuntimeInfo(
   nodePath: string,
-  execFileImpl: ExecFileAsync,
+  execFileImpl: ExecFileAsync = execFileAsync,
 ): Promise<NodeRuntimeInfo> {
   try {
     const { stdout } = await execFileImpl(nodePath, ["-e", NODE_RUNTIME_PROBE], {
