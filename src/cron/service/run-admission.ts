@@ -146,6 +146,7 @@ export async function cleanupQueuedCronRunReservations(params: {
             }
             if (runningMatches) {
               delete job.state.runningAtMs;
+              delete job.state.runningScheduleChangeId;
             }
             if (params.recompute && job.enabled && job.state.nextRunAtMs === undefined) {
               recomputeJobNextRunAtMs({
@@ -420,6 +421,7 @@ export async function activateQueuedCronRun(params: {
           ] as const;
           delete current.state.queuedAtMs;
           current.state.runningAtMs = startedAt;
+          delete current.state.runningScheduleChangeId;
           current.state.lastError = undefined;
           return { value, upsertJobIds: [current.id] };
         },
@@ -469,6 +471,7 @@ export async function activateQueuedCronRun(params: {
         }
         current.state.lastError = previousLastError;
         delete current.state.runningAtMs;
+        delete current.state.runningScheduleChangeId;
         return { value: current, upsertJobIds: [current.id] };
       },
     });

@@ -54,6 +54,19 @@ reconstructed from the final job definition. Older compatible readers ignore the
 companion but do not enforce this protection. Finish active runs before downgrading
 if their edited watcher state must be preserved.
 
+Scheduling edits made while a run awaits reconciliation record a private
+`runningScheduleChangeId` in the existing job runtime state, in the same
+transaction as the edit. The fresh value distinguishes successive committed
+edits even when a passive editor's snapshot spans two runs. Completion and
+recovery preserve the edited scheduling state; a new run and pending-run cleanup
+clear the marker. This adds no table, column, or public job field.
+
+Pending runs without this marker retain their previous recovery behavior.
+Edits acknowledged by older builds cannot be reconstructed reliably from
+timestamps or the final schedule. New edits to those pending jobs record the
+marker normally. Older compatible readers ignore it; finish pending runs before
+downgrading if their edited cadence must be preserved.
+
 Worker preparation uses the same-version rule for the bare nullable
 `worker_environments.preparation_purpose TEXT` column in the shared state
 database. Shared state database startup repair adds it without changing state schema 17.
