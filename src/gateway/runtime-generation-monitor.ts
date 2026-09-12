@@ -8,18 +8,32 @@ import { resolveRuntimeServiceBuildId } from "../version.js";
 
 const DEFAULT_RUNTIME_GENERATION_POLL_MS = 5_000;
 const gatewayInstallRoot = resolveOpenClawPackageRootSync({ moduleUrl: import.meta.url });
+const attemptedRuntimeBuildIds = new Set<string>();
 
 type RuntimeGenerationLogger = {
   info(message: string): void;
   warn(message: string): void;
 };
 
-async function readRuntimeBuildId(buildInfoPath: string): Promise<string | null> {
+type RuntimeBuildGeneration = { buildId: string; activation?: "manual" };
+
+async function readRuntimeBuildGeneration(
+  buildInfoPath: string,
+): Promise<RuntimeBuildGeneration | null> {
   try {
     // SAFETY: the parsed value is treated as unknown except for the optional field check below.
-    const parsed = JSON.parse(await readFile(buildInfoPath, "utf8")) as { buildId?: unknown };
+    const parsed = JSON.parse(await readFile(buildInfoPath, "utf8")) as {
+      buildId?: unknown;
+      activation?: unknown;
+    };
     const buildId = normalizeOptionalString(parsed.buildId);
-    return buildId && buildId.length <= 96 ? buildId : null;
+    if (!buildId || buildId.length > 96) {
+      return null;
+    }
+    return {
+      buildId,
+      ...(parsed.activation === "manual" ? { activation: parsed.activation } : {}),
+    };
   } catch {
     // Missing, partial, and invalid files are expected while a build is in progress.
     return null;
@@ -31,8 +45,9 @@ export function startGatewayRuntimeGenerationMonitor(params: {
   intervalMs?: number;
   installRoot?: string | null;
   loadedBuildId?: string | null;
-  readBuildId?: (buildInfoPath: string) => Promise<string | null>;
+  readGeneration?: (buildInfoPath: string) => Promise<RuntimeBuildGeneration | null>;
   scheduleRestart?: typeof scheduleGatewaySigusr1Restart;
+  attemptedBuildIds?: Set<string>;
 }): { stop(): Promise<void> } | null {
   const installRoot = params.installRoot === undefined ? gatewayInstallRoot : params.installRoot;
   const loadedBuildId =
@@ -42,25 +57,44 @@ export function startGatewayRuntimeGenerationMonitor(params: {
   }
 
   const buildInfoPath = path.join(installRoot, "dist", "build-info.json");
-  const readBuildId = params.readBuildId ?? readRuntimeBuildId;
+  const readGeneration = params.readGeneration ?? readRuntimeBuildGeneration;
   const scheduleRestart = params.scheduleRestart ?? scheduleGatewaySigusr1Restart;
+  const attemptedBuildIds = params.attemptedBuildIds ?? attemptedRuntimeBuildIds;
   let stopped = false;
   let restartScheduled = false;
   let inFlight: Promise<void> | null = null;
 
   const check = async () => {
-    const currentBuildId = await readBuildId(buildInfoPath);
-    if (stopped || restartScheduled || !currentBuildId || currentBuildId === loadedBuildId) {
+    const generation = await readGeneration(buildInfoPath);
+    if (stopped || restartScheduled || !generation || generation.buildId === loadedBuildId) {
+      return;
+    }
+    if (generation.activation === "manual") {
+      restartScheduled = true;
+      clearInterval(timer);
+      params.log.info(
+        `runtime generation changed (${loadedBuildId} -> ${generation.buildId}); automatic restart suppressed by update policy`,
+      );
+      return;
+    }
+    if (attemptedBuildIds.has(generation.buildId)) {
+      restartScheduled = true;
+      clearInterval(timer);
+      params.log.warn(
+        `runtime generation ${generation.buildId} still requires a fresh process; run openclaw gateway restart`,
+      );
       return;
     }
     restartScheduled = true;
+    attemptedBuildIds.add(generation.buildId);
     clearInterval(timer);
     params.log.info(
-      `runtime generation changed (${loadedBuildId} -> ${currentBuildId}); scheduling fresh-process restart`,
+      `runtime generation changed (${loadedBuildId} -> ${generation.buildId}); scheduling fresh-process restart`,
     );
     const result = scheduleRestart({
       delayMs: 0,
       reason: GATEWAY_RUNTIME_GENERATION_CHANGED_RESTART_REASON,
+      preservePendingEmitHooksOnDeferralBypass: true,
       skipCooldown: true,
     });
     if (!result.ok) {
