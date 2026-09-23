@@ -370,14 +370,6 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
   // Create default profile context for backward compatibility
   const getDefaultContext = () => forProfile();
 
-  const mapTabError = (err: unknown) => {
-    const browserMapped = toBrowserErrorResponse(err);
-    if (browserMapped) {
-      return browserMapped;
-    }
-    return null;
-  };
-
   return {
     state,
     forProfile,
@@ -397,6 +389,6 @@ export function createBrowserRouteContext(opts: ContextOptions): BrowserRouteCon
     closeTab: (targetId, options) => getDefaultContext().closeTab(targetId, options),
     stopRunningBrowser: () => getDefaultContext().stopRunningBrowser(),
     resetProfile: () => getDefaultContext().resetProfile(),
-    mapTabError,
+    mapTabError: toBrowserErrorResponse,
   };
 }

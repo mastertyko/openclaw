@@ -12,8 +12,8 @@ import {
   BROWSER_RELAY_AUTH_CHALLENGE_PATH,
   BROWSER_RELAY_AUTH_COMPLETE_PATH,
   BROWSER_RELAY_CHALLENGE_TTL_MS,
-  parseStrictJsonObject,
 } from "./auth-v2.js";
+import { parseStrictJsonObject } from "./strict-json.js";
 
 /** Count granted tabs without opening CDP or attaching the Chrome debugger. */
 export async function countExtensionRelayTabs(params: {
