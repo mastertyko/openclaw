@@ -195,14 +195,22 @@ describe("passive extension relay tab count", () => {
 
   it("bounds a stalled HTTP response by the caller's timeout", async () => {
     const fixture = await authServer({ hang: true });
-    await expect(
-      countExtensionRelayTabs({
-        ...fixture,
-        token,
-        signal: new AbortController().signal,
-        timeoutMs: 50,
-      }),
-    ).rejects.toThrow();
-    await fixture.closed;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const rejected = expect(
+        countExtensionRelayTabs({
+          ...fixture,
+          token,
+          signal: new AbortController().signal,
+          timeoutMs: 50,
+        }),
+      ).rejects.toThrow();
+      await fixture.received;
+      await vi.advanceTimersByTimeAsync(50);
+      await rejected;
+      await fixture.closed;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
