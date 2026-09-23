@@ -6,6 +6,7 @@ import { resolveUserPath } from "./home-dir.js";
 import { tryListenOnPort } from "./ports-probe.js";
 import { SUPERVISOR_HINT_ENV_VARS } from "./supervisor-markers.js";
 import { resolveUpdateCandidateStatePath } from "./update-candidate-paths.js";
+import type { UpdateCandidatePluginCodeLink } from "./update-candidate-plugin-code-links.js";
 import { prepareUpdateCandidateStateSnapshot } from "./update-candidate-snapshot.js";
 import {
   CONTROL_PLANE_UPDATE_SENTINEL_META_ENV,
@@ -23,16 +24,18 @@ import {
 } from "./update-post-core-context.js";
 import { buildUpdateRehearsalPathEnv } from "./update-rehearsal-paths.js";
 import { buildUpdateDoctorEnv } from "./update-runner-doctor.js";
+import type { UpdateSnapshotCapacity } from "./update-snapshot-capacity.js";
 
 export type UpdateCandidateRehearsal = {
-  sourceConfig: OpenClawConfig;
-  sourceConfigHash: string | null | undefined;
   stateDir: string;
   configPath: string;
   workspaceDir: string;
   env: NodeJS.ProcessEnv;
   port: number;
-  cleanup: () => Promise<void>;
+  snapshotCapacity: UpdateSnapshotCapacity;
+  cleanupDirectories: string[];
+  pluginCodeLinks?: UpdateCandidatePluginCodeLink[];
+  cleanup: (assertDirectoryCurrent?: (directory: string) => void) => Promise<void>;
 };
 
 function isolatedConfig(
@@ -99,7 +102,13 @@ function isolatedConfig(
     mode: "local",
     bind: "loopback",
     port,
-    auth: { mode: "token", token: randomUUID() },
+    auth: {
+      ...copied.gateway?.auth,
+      mode: "token",
+      token: randomUUID(),
+      password: undefined,
+      allowTailscale: false,
+    },
     tls: { enabled: false },
     tailscale: { mode: "off" },
     controlUi: { enabled: false },
@@ -114,10 +123,9 @@ function isolatedConfig(
   return copied;
 }
 
-/** One disposable generation, shared by candidate diagnostics and every turn of a repair run. */
+/** Prepare one disposable generation for candidate diagnostics. */
 export async function prepareUpdateCandidateRehearsal(params: {
   config: OpenClawConfig;
-  sourceConfigHash?: string | null;
   candidateRoot: string;
   stateDir: string;
   env?: NodeJS.ProcessEnv;
@@ -179,7 +187,13 @@ export async function prepareUpdateCandidateRehearsal(params: {
     }
     return env;
   };
-  const { stateDir: tempDir, pluginPaths } = await prepareUpdateCandidateStateSnapshot({
+  const {
+    stateDir: tempDir,
+    pluginPaths,
+    pluginCodeLinks,
+    snapshotCapacity,
+    cleanupDirectories,
+  } = await prepareUpdateCandidateStateSnapshot({
     ...params,
     env: sourceEnv,
     workerEnv,
@@ -187,6 +201,13 @@ export async function prepareUpdateCandidateRehearsal(params: {
   const env = workerEnv(tempDir);
   const configPath = path.join(tempDir, "openclaw.json");
   const workspaceDir = path.join(tempDir, "workspace");
+  const cleanup = async (assertDirectoryCurrent?: (directory: string) => void) => {
+    for (const directory of cleanupDirectories) {
+      // A receiving owner can retain exact physical custody across inventory/Doctor.
+      assertDirectoryCurrent?.(directory);
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  };
   try {
     params.signal?.throwIfAborted();
     const port = await tryListenOnPort({
@@ -207,17 +228,18 @@ export async function prepareUpdateCandidateRehearsal(params: {
     await fs.writeFile(configPath, serialized, { mode: 0o600 });
     await fs.mkdir(workspaceDir, { recursive: true, mode: 0o700 });
     return {
-      sourceConfig: params.config,
-      sourceConfigHash: params.sourceConfigHash,
       stateDir: tempDir,
       configPath,
       workspaceDir,
       env,
       port,
-      cleanup: () => fs.rm(tempDir, { recursive: true, force: true }),
+      snapshotCapacity,
+      cleanupDirectories,
+      pluginCodeLinks,
+      cleanup,
     };
   } catch (error) {
-    await fs.rm(tempDir, { recursive: true, force: true });
+    await cleanup();
     throw error;
   }
 }
